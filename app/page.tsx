@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +14,15 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
-import { Plus, Users, Calendar, User, CalendarCheck } from "lucide-react";
+import {
+  Plus,
+  Users,
+  Calendar,
+  User,
+  CalendarCheck,
+  Link as LinkIcon,
+  AlertTriangle,
+} from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +33,14 @@ type Member = {
   name: string;
   color: string;
   availability: TimeSlot[];
+};
+
+type Meeting = {
+  id: string;
+  title: string;
+  slot: TimeSlot;
+  participantIds: string[];
+  meetingLink?: string;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -43,6 +59,11 @@ const COLORS = [
 
 const slot = (day: number, hour: number): TimeSlot => `${day}-${hour}`;
 
+function formatSlotLabel(s: TimeSlot) {
+  const [d, h] = s.split("-").map(Number);
+  return `${DAYS[d]} ${h}:00–${h + 1}:00`;
+}
+
 // ─── Fake initial data ────────────────────────────────────────────────────────
 
 // 假資料：三人皆有「週三 9–11」共同空閒，方便展示
@@ -52,11 +73,20 @@ const INITIAL_MEMBERS: Member[] = [
     name: "我",
     color: "bg-blue-500",
     availability: [
-      slot(0, 9), slot(0, 10), slot(0, 11),          // Mon 9–12
-      slot(0, 14), slot(0, 15), slot(0, 16),         // Mon 14–17
-      slot(2, 9),  slot(2, 10), slot(2, 11),         // Wed 9–12（共同）
-      slot(3, 14), slot(3, 15), slot(3, 16),         // Thu 14–17
-      slot(4, 9),  slot(4, 10),                      // Fri 9–11
+      slot(0, 9),
+      slot(0, 10),
+      slot(0, 11), // Mon 9–12
+      slot(0, 14),
+      slot(0, 15),
+      slot(0, 16), // Mon 14–17
+      slot(2, 9),
+      slot(2, 10),
+      slot(2, 11), // Wed 9–12（共同）
+      slot(3, 14),
+      slot(3, 15),
+      slot(3, 16), // Thu 14–17
+      slot(4, 9),
+      slot(4, 10), // Fri 9–11
     ],
   },
   {
@@ -64,10 +94,17 @@ const INITIAL_MEMBERS: Member[] = [
     name: "小梁",
     color: "bg-green-500",
     availability: [
-      slot(0, 9),  slot(0, 10), slot(0, 11),         // Mon 9–12
-      slot(2, 9),  slot(2, 10), slot(2, 11),         // Wed 9–12（共同）
-      slot(2, 14), slot(2, 15), slot(2, 16),         // Wed 14–17
-      slot(4, 9),  slot(4, 10),                      // Fri 9–11
+      slot(0, 9),
+      slot(0, 10),
+      slot(0, 11), // Mon 9–12
+      slot(2, 9),
+      slot(2, 10),
+      slot(2, 11), // Wed 9–12（共同）
+      slot(2, 14),
+      slot(2, 15),
+      slot(2, 16), // Wed 14–17
+      slot(4, 9),
+      slot(4, 10), // Fri 9–11
     ],
   },
   {
@@ -75,10 +112,25 @@ const INITIAL_MEMBERS: Member[] = [
     name: "盧盧",
     color: "bg-purple-500",
     availability: [
-      slot(1, 10), slot(1, 11), slot(1, 12),         // Tue 10–13
-      slot(2, 9),  slot(2, 10), slot(2, 11),         // Wed 9–12（共同）
-      slot(3, 14), slot(3, 15),                      // Thu 14–16
+      slot(1, 10),
+      slot(1, 11),
+      slot(1, 12), // Tue 10–13
+      slot(2, 9),
+      slot(2, 10),
+      slot(2, 11), // Wed 9–12（共同）
+      slot(3, 14),
+      slot(3, 15), // Thu 14–16
     ],
+  },
+];
+
+const INITIAL_MEETINGS: Meeting[] = [
+  {
+    id: "meeting-1",
+    title: "專題討論",
+    slot: slot(2, 10), // 週三 10:00–11:00
+    participantIds: ["me", "xiao-liang"],
+    meetingLink: "https://meet.google.com/demo-link",
   },
 ];
 
@@ -123,7 +175,9 @@ function ScheduleGrid({
                 return (
                   <td key={d} className="p-0.5">
                     <div
-                      className={`h-8 rounded border transition-colors ${cellClass} ${onToggle ? "cursor-pointer" : "cursor-default"}`}
+                      className={`h-8 rounded border transition-colors ${cellClass} ${
+                        onToggle ? "cursor-pointer" : "cursor-default"
+                      }`}
                       onClick={() => onToggle?.(d, h)}
                     />
                   </td>
@@ -141,7 +195,7 @@ function ScheduleGrid({
 
 function Legend({ items }: { items: { color: string; label: string }[] }) {
   return (
-    <div className="flex gap-4 mb-5 text-xs text-muted-foreground">
+    <div className="flex gap-4 mb-5 text-xs text-muted-foreground flex-wrap">
       {items.map((item) => (
         <div key={item.label} className="flex items-center gap-1.5">
           <div className={`w-3 h-3 rounded ${item.color}`} />
@@ -156,9 +210,17 @@ function Legend({ items }: { items: { color: string; label: string }[] }) {
 
 export default function MeetFlow() {
   const [members, setMembers] = useState<Member[]>(INITIAL_MEMBERS);
+  const [meetings, setMeetings] = useState<Meeting[]>(INITIAL_MEETINGS);
+
   const [newName, setNewName] = useState("");
   const [open, setOpen] = useState(false);
   const [viewId, setViewId] = useState("xiao-liang");
+
+  // 建立會議相關 state
+  const [meetingOpen, setMeetingOpen] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingLink, setMeetingLink] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState<TimeSlot | "">("");
 
   const me = members.find((m) => m.id === "me")!;
   const others = members.filter((m) => m.id !== "me");
@@ -169,6 +231,19 @@ export default function MeetFlow() {
       members.every((m) => m.availability.includes(slot(d, h)))
     ).map((h) => slot(d, h))
   );
+
+  const allParticipantIds = members.map((m) => m.id);
+
+  const conflictingMeetings = useMemo(() => {
+    if (!selectedSlot) return [];
+    return meetings.filter(
+      (meeting) =>
+        meeting.slot === selectedSlot &&
+        meeting.participantIds.some((id) => allParticipantIds.includes(id))
+    );
+  }, [selectedSlot, meetings, allParticipantIds]);
+
+  const hasConflict = conflictingMeetings.length > 0;
 
   function toggleMySlot(day: number, hour: number) {
     const s = slot(day, hour);
@@ -201,6 +276,43 @@ export default function MeetFlow() {
     setOpen(false);
   }
 
+  function openCreateMeetingDialog(targetSlot: TimeSlot) {
+    setSelectedSlot(targetSlot);
+    setMeetingTitle("");
+    setMeetingLink("");
+    setMeetingOpen(true);
+  }
+
+  function addMeeting() {
+    const title = meetingTitle.trim();
+    if (!title || !selectedSlot || hasConflict) return;
+
+    const newMeeting: Meeting = {
+      id: `meeting-${Date.now()}`,
+      title,
+      slot: selectedSlot,
+      participantIds: allParticipantIds,
+      meetingLink: meetingLink.trim() || undefined,
+    };
+
+    setMeetings((prev) =>
+      [...prev, newMeeting].sort((a, b) => {
+        const [ad, ah] = a.slot.split("-").map(Number);
+        const [bd, bh] = b.slot.split("-").map(Number);
+        return ad === bd ? ah - bh : ad - bd;
+      })
+    );
+
+    setMeetingTitle("");
+    setMeetingLink("");
+    setSelectedSlot("");
+    setMeetingOpen(false);
+  }
+
+  function getMemberName(id: string) {
+    return members.find((m) => m.id === id)?.name ?? id;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ── */}
@@ -217,7 +329,7 @@ export default function MeetFlow() {
       {/* ── Main ── */}
       <main className="max-w-4xl mx-auto px-6 py-8">
         <Tabs defaultValue="members">
-          <TabsList className="mb-8 h-10">
+          <TabsList className="mb-8 h-10 flex-wrap">
             <TabsTrigger value="members" className="gap-1.5 text-sm">
               <Users className="w-3.5 h-3.5" />
               成員
@@ -233,6 +345,10 @@ export default function MeetFlow() {
             <TabsTrigger value="common" className="gap-1.5 text-sm">
               <CalendarCheck className="w-3.5 h-3.5" />
               共同空閒
+            </TabsTrigger>
+            <TabsTrigger value="meetings" className="gap-1.5 text-sm">
+              <LinkIcon className="w-3.5 h-3.5" />
+              會議管理
             </TabsTrigger>
           </TabsList>
 
@@ -412,18 +528,163 @@ export default function MeetFlow() {
             </Card>
 
             {commonSlots.length > 0 && (
-              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                {commonSlots.map((s) => {
-                  const [d, h] = s.split("-").map(Number);
-                  return (
-                    <div
-                      key={s}
-                      className="text-sm px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200"
-                    >
-                      {DAYS[d]} {h}:00–{h + 1}:00
-                    </div>
-                  );
-                })}
+              <div className="mt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium">可直接建立會議的時段</h3>
+                  <Dialog open={meetingOpen} onOpenChange={setMeetingOpen}>
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>建立新會議</DialogTitle>
+                      </DialogHeader>
+
+                      <div className="space-y-4 mt-2">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">會議名稱</label>
+                          <Input
+                            placeholder="例如：期中專題討論"
+                            value={meetingTitle}
+                            onChange={(e) => setMeetingTitle(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">會議時段</label>
+                          <Input value={selectedSlot ? formatSlotLabel(selectedSlot) : ""} readOnly />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">
+                            線上會議連結（選填）
+                          </label>
+                          <Input
+                            placeholder="https://meet.google.com/..."
+                            value={meetingLink}
+                            onChange={(e) => setMeetingLink(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">參與者</label>
+                          <div className="flex flex-wrap gap-2">
+                            {members.map((m) => (
+                              <Badge key={m.id} variant="secondary">
+                                {m.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+
+                        {hasConflict && (
+                          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                              <div>
+                                <p className="text-sm font-medium">偵測到時段衝突</p>
+                                <p className="text-xs mt-1">
+                                  以下會議已佔用這個時段：
+                                </p>
+                                <div className="mt-2 flex flex-col gap-1">
+                                  {conflictingMeetings.map((m) => (
+                                    <span key={m.id} className="text-xs">
+                                      ・{m.title}（{formatSlotLabel(m.slot)}）
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <Button
+                          onClick={addMeeting}
+                          disabled={!meetingTitle.trim() || !selectedSlot || hasConflict}
+                          className="w-full"
+                        >
+                          建立會議
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  {commonSlots.map((s) => {
+                    const occupied = meetings.some((meeting) => meeting.slot === s);
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => openCreateMeetingDialog(s)}
+                        className={`text-left px-3 py-3 rounded-lg border transition ${
+                          occupied
+                            ? "bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950 dark:border-amber-800 dark:text-amber-200"
+                            : "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200"
+                        }`}
+                      >
+                        <div className="font-medium text-sm">{formatSlotLabel(s)}</div>
+                        <div className="text-xs mt-1">
+                          {occupied ? "此時段已有會議，建立時會檢查衝突" : "點擊建立會議"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ── Tab 5: Meetings ── */}
+          <TabsContent value="meetings">
+            <div className="mb-5">
+              <h2 className="text-base font-semibold">會議管理</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                查看已建立的會議、參與成員與線上會議連結
+              </p>
+            </div>
+
+            {meetings.length === 0 ? (
+              <Card>
+                <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                  目前還沒有已建立的會議
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {meetings.map((meeting) => (
+                  <Card key={meeting.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-sm">{meeting.title}</h3>
+                            <Badge variant="outline">
+                              {formatSlotLabel(meeting.slot)}
+                            </Badge>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {meeting.participantIds.map((id) => (
+                              <Badge key={id} variant="secondary">
+                                {getMemberName(id)}
+                              </Badge>
+                            ))}
+                          </div>
+
+                          {meeting.meetingLink && (
+                            <a
+                              href={meeting.meetingLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 underline underline-offset-4"
+                            >
+                              <LinkIcon className="w-4 h-4" />
+                              開啟線上會議連結
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             )}
           </TabsContent>
